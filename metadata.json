@@ -1,0 +1,6 @@
+{
+  "name": "LabelVie Store Frontend",
+  "description": "A modern, responsive e-commerce storefront for labelvie.ma with RTL support, cart functionality, and premium food retail UI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
