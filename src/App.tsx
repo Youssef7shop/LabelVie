@@ -17,11 +17,11 @@ import { Product, CartItem, Order, User as UserType } from './types';
 import { products as initialProducts } from './data';
 
 export default function App() {
-  const [isAdminRoute, setIsAdminRoute] = useState(window.location.hash.toLowerCase() === '#admin');
+  const [isAdminRoute, setIsAdminRoute] = useState(window.location.hash.toLowerCase() === '#adminlabelvie234');
 
   useEffect(() => {
     const handleHashChange = () => {
-      setIsAdminRoute(window.location.hash.toLowerCase() === '#admin');
+      setIsAdminRoute(window.location.hash.toLowerCase() === '#adminlabelvie234');
     };
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
