@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { 
   LayoutDashboard, ShoppingBag, Users, Settings, 
-  LogOut, Package, TrendingUp, DollarSign, Plus, Edit, Trash2, Store, X
+  LogOut, Package, TrendingUp, DollarSign, Plus, Edit, Trash2, Store, X, FileSpreadsheet
 } from 'lucide-react';
 import { Product, Order, User } from '../types';
+import { googleSignIn, getAccessToken } from '../firebase';
 
 interface AdminDashboardProps {
   lang: 'fr' | 'ar';
@@ -29,6 +30,61 @@ export default function AdminDashboard({ lang, products, orders, users, onAddPro
   });
   
   const [localSettings, setLocalSettings] = useState(settings);
+
+  const handleExportOrders = async () => {
+    let token = await getAccessToken();
+    if (!token) {
+        const result = await googleSignIn();
+        if (result) token = result.accessToken;
+    }
+    
+    if (!token) return;
+
+    try {
+        const spreadsheetRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+            method: 'POST',
+            headers: { 
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                properties: {
+                    title: `LabelVie Orders - ${new Date().toLocaleDateString()}`
+                }
+            })
+        });
+        const spreadsheet = await spreadsheetRes.json();
+
+        const rows = [
+            ['ID', 'Client', 'Date', 'Montant', 'Articles', 'Statut'],
+            ...orders.map(o => [
+                o.id,
+                o.customerName,
+                new Date(o.createdAt).toLocaleDateString(),
+                o.total.toString(),
+                o.items.map(i => `${i.quantity}x ${i.name}`).join(', '),
+                o.status
+            ])
+        ];
+
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet.spreadsheetId}/values/Sheet1!A1:F${rows.length}?valueInputOption=USER_ENTERED`, {
+            method: 'PUT',
+            headers: { 
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                values: rows
+            })
+        });
+
+        alert(lang === 'fr' ? 'Exporté avec succès !' : 'تم التصدير بنجاح!');
+        window.open(`https://docs.google.com/spreadsheets/d/${spreadsheet.spreadsheetId}`, '_blank');
+    } catch (e) {
+        console.error(e);
+        alert(lang === 'fr' ? 'Erreur lors de l\'exportation' : 'خطأ أثناء التصدير');
+    }
+  };
 
   const totalRevenue = orders.reduce((acc, o) => acc + o.total, 0);
   const totalOrdersCount = orders.length;
@@ -274,6 +330,15 @@ export default function AdminDashboard({ lang, products, orders, users, onAddPro
           
           {activeTab === 'orders' && (
             <div className="space-y-6">
+              <div className="flex justify-end">
+                <button 
+                  onClick={handleExportOrders}
+                  className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-sm"
+                >
+                  <FileSpreadsheet className="h-5 w-5" />
+                  {lang === 'fr' ? 'Exporter vers Google Sheets' : 'تصدير إلى جوجل شيتس'}
+                </button>
+              </div>
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm text-gray-600">
