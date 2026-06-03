@@ -4,6 +4,8 @@
  */
 
 import { useState, useEffect } from 'react';
+import { collection, onSnapshot, setDoc, doc, deleteDoc, getDocs } from 'firebase/firestore';
+import { db } from './firebase';
 import Header from './components/Header';
 import Hero from './components/Hero';
 import ProductCard from './components/ProductCard';
@@ -28,53 +30,55 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'labelvie_products' && e.newValue) {
-        setGlobalProducts(JSON.parse(e.newValue));
+    // Listen to Firebase products
+    const unsubProducts = onSnapshot(collection(db, 'products'), (snapshot) => {
+      const productsData = snapshot.docs.map(doc => doc.data() as Product);
+      if (productsData.length === 0) setGlobalProducts(initialProducts); // fallback
+      else setGlobalProducts(productsData);
+    });
+
+    // Listen to Firebase orders
+    const unsubOrders = onSnapshot(collection(db, 'orders'), (snapshot) => {
+      setGlobalOrders(snapshot.docs.map(doc => doc.data() as Order));
+    });
+
+    // Listen to Firebase users
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+      setGlobalUsers(snapshot.docs.map(doc => doc.data() as UserType));
+    });
+
+    // Listen to Firebase settings
+    const unsubSettings = onSnapshot(doc(db, 'settings', 'store'), (docSnap) => {
+      if (docSnap.exists()) {
+        setStoreSettings(docSnap.data());
       }
-      if (e.key === 'labelvie_orders' && e.newValue) {
-        setGlobalOrders(JSON.parse(e.newValue));
-      }
-      if (e.key === 'labelvie_users' && e.newValue) {
-        setGlobalUsers(JSON.parse(e.newValue));
-      }
-      if (e.key === 'labelvie_settings' && e.newValue) {
-        setStoreSettings(JSON.parse(e.newValue));
-      }
+    });
+
+    return () => {
+      unsubProducts();
+      unsubOrders();
+      unsubUsers();
+      unsubSettings();
     };
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
   const [lang, setLang] = useState<'fr' | 'ar'>('fr');
   
-  const [globalProducts, setGlobalProducts] = useState<Product[]>(() => {
-    const saved = localStorage.getItem('labelvie_products');
-    return saved ? JSON.parse(saved) : initialProducts;
+  const [globalProducts, setGlobalProducts] = useState<Product[]>(initialProducts);
+  const [globalOrders, setGlobalOrders] = useState<Order[]>([]);
+  const [globalUsers, setGlobalUsers] = useState<UserType[]>([]);
+  const [storeSettings, setStoreSettings] = useState({
+    storeName: 'LabelVie',
+    currency: 'MAD',
+    contactEmail: 'contact@labelvie.ma'
   });
 
-  const [globalOrders, setGlobalOrders] = useState<Order[]>(() => {
-    const saved = localStorage.getItem('labelvie_orders');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [globalUsers, setGlobalUsers] = useState<UserType[]>(() => {
-    const saved = localStorage.getItem('labelvie_users');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [storeSettings, setStoreSettings] = useState(() => {
-    const saved = localStorage.getItem('labelvie_settings');
-    return saved ? JSON.parse(saved) : {
-      storeName: 'LabelVie',
-      currency: 'MAD',
-      contactEmail: 'contact@labelvie.ma'
-    };
-  });
-
-  const handleUpdateSettings = (newSettings: any) => {
-    setStoreSettings(newSettings);
-    localStorage.setItem('labelvie_settings', JSON.stringify(newSettings));
+  const handleUpdateSettings = async (newSettings: any) => {
+    try {
+      await setDoc(doc(db, 'settings', 'store'), newSettings);
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -87,15 +91,16 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
-  const handleLogin = (newUser: { name: string; email: string }) => {
+  const handleLogin = async (newUser: { name: string; email: string }) => {
     setUser(newUser);
     localStorage.setItem('labelvie_user', JSON.stringify(newUser));
 
     setGlobalUsers(prev => {
-      if (!prev.some(u => u.email === newUser.email)) {
-        const updated = [...prev, { id: Date.now().toString(), name: newUser.name, email: newUser.email, role: 'customer' as const, createdAt: new Date().toISOString() }];
-        localStorage.setItem('labelvie_users', JSON.stringify(updated));
-        return updated;
+      const isExisting = prev.some(u => u.email === newUser.email);
+      if (!isExisting) {
+        const newUserObj = { id: Date.now().toString(), name: newUser.name, email: newUser.email, role: 'customer' as const, createdAt: new Date().toISOString() };
+        setDoc(doc(db, 'users', newUserObj.id), newUserObj);
+        return [...prev, newUserObj];
       }
       return prev;
     });
@@ -110,14 +115,14 @@ export default function App() {
     setUser(updatedUser);
     localStorage.setItem('labelvie_user', JSON.stringify(updatedUser));
 
-    setGlobalUsers(prev => {
-      const updated = prev.map(u => u.email === user?.email ? { ...u, name: updatedUser.name, email: updatedUser.email } : u);
-      localStorage.setItem('labelvie_users', JSON.stringify(updated));
-      return updated;
-    });
+    const existingUser = globalUsers.find(u => u.email === user?.email);
+    if (existingUser) {
+      const u = { ...existingUser, name: updatedUser.name, email: updatedUser.email };
+      setDoc(doc(db, 'users', u.id), u);
+    }
   };
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     const newOrder: Order = {
       id: `#ORD-${Math.floor(1000 + Math.random() * 9000)}`,
       userId: user?.email || 'guest',
@@ -128,11 +133,11 @@ export default function App() {
       createdAt: new Date().toISOString()
     };
     
-    setGlobalOrders(prev => {
-      const updated = [newOrder, ...prev];
-      localStorage.setItem('labelvie_orders', JSON.stringify(updated));
-      return updated;
-    });
+    try {
+      await setDoc(doc(db, 'orders', newOrder.id), newOrder);
+    } catch (e) {
+      console.error(e);
+    }
 
     setIsCartOpen(false);
     setCartItems([]);
@@ -165,28 +170,22 @@ export default function App() {
     ));
   };
 
-  const handleAddProduct = (newProduct: Omit<Product, 'id'>) => {
-    setGlobalProducts(prev => {
-      const updated = [{ ...newProduct, id: Math.random().toString(36).substring(2, 9) }, ...prev];
-      localStorage.setItem('labelvie_products', JSON.stringify(updated));
-      return updated;
-    });
+  const handleAddProduct = async (newProduct: Omit<Product, 'id'>) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    const prod = { ...newProduct, id };
+    await setDoc(doc(db, 'products', id), prod);
   };
 
-  const handleDeleteProduct = (id: string) => {
-    setGlobalProducts(prev => {
-      const updated = prev.filter(p => p.id !== id);
-      localStorage.setItem('labelvie_products', JSON.stringify(updated));
-      return updated;
-    });
+  const handleDeleteProduct = async (id: string) => {
+    await deleteDoc(doc(db, 'products', id));
   };
 
-  const handleUpdateOrderStatus = (orderId: string, newStatus: 'pending' | 'delivered' | 'cancelled') => {
-    setGlobalOrders(prev => {
-      const updated = prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o);
-      localStorage.setItem('labelvie_orders', JSON.stringify(updated));
-      return updated;
-    });
+  const handleUpdateOrderStatus = async (orderId: string, newStatus: 'pending' | 'delivered' | 'cancelled') => {
+    const order = globalOrders.find(o => o.id === orderId);
+    if (order) {
+      const updatedOrder = { ...order, status: newStatus };
+      await setDoc(doc(db, 'orders', orderId), updatedOrder);
+    }
   };
 
   if (isAdminRoute) {
